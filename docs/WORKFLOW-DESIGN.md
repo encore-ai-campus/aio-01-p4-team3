@@ -1,0 +1,163 @@
+# 노코드 워크플로우 설계서 · 3팀
+
+> - **한눈에**: 창고형 약국 업무 도우미의 n8n 워크플로우 설계서입니다. 노드 이름은 `workflows/*.json`의 실제 이름과 같습니다.
+> - 본체 `team3-support`(47노드)는 입력을 검사하고 분류한 뒤, `Type policy`(유형별 처리 표)가 정한 처리 방식 4개에 따라 바로 답하거나 담당자에게 이관합니다.
+> - 기록은 늘 data-api(티켓 · 알림 · DLQ)에 먼저 남깁니다. 약사 화면 · Slack · Jira로 보내는 일은 실패해도 응답을 막지 않습니다.
+> - 11/9 재확인(팀 VM n8n에 3절 표의 워크플로우 7개 · 색인 `pharm_kb_v1` 38청크)에서 공통 판정 20/20 × 3 · 팀 24/24 × 3 · 장애 3/3 × 3을 통과했고 Error Workflow도 실제로 1회 실행됐습니다. 이 문서의 분기 · 저장 · 오류 경로는 [실행 결과서](EXECUTION-RESULT.md) 1절에서 같은 시나리오 ID로 확인할 수 있습니다. 동시 요청 15 · 30건도 실패 0입니다(`runs/recheck-20261109.md` 끝 절).
+> - 남은 한계: HTTP 재시도는 티켓 생성에만 있고, 4xx · 429는 VM에서 재현하지 않았습니다. 화면 사용자 이름 확인은 운영 SSO가 맡을 몫이고, n8n 실행 기록 안에 연락처 원문이 남아 있습니다([실행 결과서](EXECUTION-RESULT.md) 4.2).
+
+**읽는 법**
+
+- **이관**은 사람(당일 책임 약사 · 약국장)에게 넘기는 것입니다(티켓 생성, 응답 `route: 담당자 이관`). **처리 방식 4개**는 자동 답변(`auto`) · 근거 + 이관(`evidence_handoff`) · 이관만(`handoff_only`) · 접수 조회(`record_status`)이고, 권한 없음(`deny`) · 보완 질문(`clarify`)은 이 4개와 따로 갈리는 갈래입니다. 유형별 처리 표의 원본은 `config/type-policy.json`입니다.
+- **data-api**는 강사가 주는 연습용 가짜 회사 서버(티켓 · 알림 · DLQ · 직원 · 문서)이고, **DLQ**는 처리 못 한 요청을 잃지 않게 넣어 두는 대기열입니다. **고장 스위치**는 data-api의 `/admin/fault`로 티켓 API를 일부러 고장 내거나 느리게 만드는 기능입니다.
+- **연습 모드**는 Slack · Jira로 보내지 않는 레포 기본값이고, **실제 모드**는 긴급 · 실패를 Slack, 장애를 Jira로 보내는 팀 VM 설정입니다.
+- **WF-xx**는 공통 시나리오(강사가 정한 14유형, `cases/common.json`), **T-xx**는 팀 시나리오(`cases/team.json`) 번호입니다. **node 시뮬**은 VM에서 재현할 수 없는 경우를 노드 코드에 상태 코드를 직접 넣어 돌려 본 확인입니다.
+- **Header Auth**는 요청 헤더에 든 키로 인증하는 n8n 방식이고, **Error Workflow**는 워크플로우 실행이 예상 못 한 오류로 끝나면 n8n이 대신 실행하는 워크플로우(`team3-errors`)입니다. `reason` 값의 뜻은 `00-DESIGN.md` 2절에 있습니다.
+
+## 1. 업무 시나리오
+
+가상 창고형 약국에서 계산대 직원은 마감 순서 · 회수 공표 · 접수 건을, 어르신 손님은 약 정보를 묻습니다. 질문은 질문하기 화면(또는 팀 웹훅)으로 들어옵니다. 워크플로우는 입력을 검사하고 분류한 뒤, 문의 유형별 처리 방식에 따라 약국 문서를 검색해 근거와 함께 답합니다. 사람이 정할 일(회수 대상 확인 · 현금 차액 · 복약 판단 · 위험 신호)은 당일 책임 약사나 약국장에게 티켓으로 넘깁니다.
+
+| 처리할 문의 유형 | 처리 방식 | 근거 문서 | 긴급도 기준 |
+| --- | --- | --- | --- |
+| 회수 공지가 떴어요 (`recall`) | 근거 + 이관 (약사) | `recall-first-response`, `recall-customer-guide` | 늘 `high` |
+| 혼자 하는 첫 마감 (`closing`) | 자동 답변 (현금 차액은 근거 + 약국장 이관) | `closing-checklist`, `closing-cash-mismatch` | 냉장고 · 온도 · 향정 · 도난 → `high` (약사) |
+| 어르신 약 질문 (`senior`) | 자동 답변 + AI 고지 (병용 · '내 경우' 질문은 보완 질문 뒤 이관) | `senior-*` 3개 | 숨참 · 가슴 · 의식 · 출혈 · 임신 등 → `high` |
+| 내 접수 건 확인 (`record_status`) | 접수 조회 | `request-records-guide` | — |
+| 그 밖 (`other`: 시설 · 기기 고장, 문서 밖 질문) | 이관만 (약국장) | — | — |
+
+## 2. 전체 흐름
+
+1. 문의 수신 (Webhook `team3-support`, Header Auth)
+2. 사용자 확인 (`GET /employees/<user>` → `role` · `access_levels`)
+3. 입력 검증 (빈 질문 · 501자 · 없는 사용자 → 400, LLM 호출 없음)
+4. 중복 확인 (`/cache/<request_id>`, 같은 요청이면 저장된 결과)
+5. 프롬프트 주입 차단 (규칙 기반, LLM 호출 전)
+6. 분류 Agent (`Triage`) → `Type policy` (역할 · `handoff_rules` · 보완 질문 · 접수 번호)
+7. 처리 방식으로 분기 (`Route by mode`: 처리 방식 4개 자동 답변 · 근거 + 이관 · 이관만 · 접수 조회, 그 밖에 권한 없음 · 보완 질문)
+8. 병렬: 지식 검색 (`team3-search`, 권한별 메모리 키) + 접수 조회 (`requester = user`)
+9. 답변 Agent (`Writer`) → 검증 Agent (`Verifier`) + 금지 문장 검사 (`Check answer`). R-번호(접수 번호) 건은 응답 끝에 접수 상태 줄이 따로 붙으므로, 답 본문에서는 같은 내용의 문장을 뺍니다 (WF-12)
+10. 이관 (`team3-handoff`: data-api 티켓 · 알림 · DLQ 먼저 → 화면 · Slack · Jira 덧붙임)
+    - 고정 안내 문구(차단 · 권한 없음 · 보완 질문 · 근거 없음 · 이관 · 장애)는 묻는 사람(손님 `patient` / 직원), 이관받는 사람(`assignee` → 약사님 · 약국장님), 긴급도 세 가지로 고릅니다
+11. 출력 필터 (연락처 가림) → 응답 조립 · 캐시 저장 · 실행 기록 (개인정보 없이) → Respond
+
+## 3. 워크플로우 흐름도
+
+```mermaid
+flowchart TD
+  W(["Support webhook"]) --> SS["Support settings"] --> ST["Start timer"] --> U["Check user"] --> VI["Validate input"] --> V{"Valid?"}
+  V -->|아님| IB["Invalid body"] --> R400(["Reject invalid"])
+  V -->|예| CK["Check cache"] --> C{"Cached?"} -->|예| MD["Mark duplicate"] --> RC(["Send cached"])
+  C -->|아님| IR["Injection rules"] --> I{"Blocked?"} -->|공격| B["Blocked result"]
+  I -->|통과| T{{"Triage"}} --> TF{"Triage failed?"} -->|아님| P["Type policy"] --> M{"Route by mode"}
+  TF -.->|LLM 멈춤| L["LLM down"] -.-> P
+  M -->|deny| D["Deny"]
+  M -->|clarify| Q["Clarify"]
+  M -->|auto · evidence_handoff| S["Search knowledge"] & G["Get record"]
+  M -->|record_status| G
+  M -->|handoff_only| PH["Prepare handoff"]
+  G --> RM{"Record mode?"} -->|record_status| RA["Record answer"]
+  RM -->|그 밖| MG["Merge evidence"]
+  S --> MG --> BC["Build context"] --> E{"Evidence?"} -->|있음| WR{{"Writer"}} --> VE{{"Verifier"}} --> CA["Check answer"] --> NH{"Needs handoff?"}
+  E -->|없음| NE["No evidence"] --> PH
+  NH -->|이관| PH --> H["Handoff"] --> AH["After handoff"]
+  NH -->|답| BR["Build result"]
+  B & D & Q & RA & AH --> BR
+  BR --> F["Output filter"] --> SV["Save cache"] --> RR["Restore result"] --> LG["Log request"] --> RG["Result again"] --> OUT(["Send result"])
+```
+
+워크플로우 파일:
+
+| 파일 | 웹훅 · 트리거 | 노드 수 |
+| --- | --- | --- |
+| `team3-support.json` | `POST /webhook/team3-support` | 47 |
+| `team3-index.json` · `team3-search.json` | `team3-index` · `team3-search` | 15 · 13 |
+| `team3-handoff.json` · `team3-errors.json` | `team3-handoff` · Error Trigger (`team3Errors00001`) | 31 · 11 |
+| `team3-ticket.json` · `team3-alert.json` | Execute Workflow (`team3Ticket00001` · `team3Alert000001`) | 7 · 7 |
+
+## 4. 에이전트 역할 · 분기 · 병렬 · 루프
+
+### 4.1 역할 카드
+
+| 역할 | 목적 | 입력 | 출력 (JSON) | Tool | 하지 않는 것 | 노드 이름 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 분류 (triage) | 유형 · 긴급도 · 모자란 정보 | 질문 · 보완 답 · 역할 | `{type, urgency, missing, ticket_id}` | 없음 | 답하지 않음 | `Triage` |
+| 답변 (writer) | 번호 붙은 발췌로만 답 | 질문 · 발췌 · 접수 상태 | 글 + `[n]` | 없음 | 발췌 밖 내용, 복용 판단, 약속 | `Writer` |
+| 검증 (verifier) | 근거 · 정책 확인 | 질문 · 답 · 발췌 | `{grounded, policy_ok, issues}` | 없음 | 답을 새로 쓰지 않음 | `Verifier` |
+
+- LLM이 판단하는 곳은 위 세 노드뿐입니다(모델 `gpt-4.1-mini` · temperature 0, `Triage model` · `Writer model` · `Verifier model`). `Injection rules` · `Type policy` · `Route by mode` · `Build context` · `Check answer`는 코드와 규칙으로 동작합니다.
+- 실패 조건: `Triage`가 오류를 내면 `Triage failed?` → `LLM down`을 거쳐 이관합니다(`llm_down`). `Check answer`는 `grounded` · `policy_ok`가 둘 다 true이고, 금지 문장과 (자동 답변일 때) 약속 문장이 없고, 인용 번호가 발췌 범위 안일 때만 통과시킵니다. 통과하지 못하면 자동 답변 계획은 이관(`low_confidence`)으로 바뀌고, 답이 비면 `llm_down`입니다.
+
+### 4.2 구조
+
+| 구조 | 어디 (노드) | 목적 | 기준값 · 최대 횟수 | 확인한 시나리오 |
+| --- | --- | --- | --- | --- |
+| 분기 | `Route by mode` | 처리 방식 4개 + 권한 없음 · 보완 질문 | `Type policy` 표 | WF-01 · 02 · 05 · 06 · 12 |
+| 분기 | `Build context` → `Evidence?` → `Check answer` | 검색 점수 · 근거 유무 · 금지 문장 | `SCORE_MIN` = 0.37 (실측), `top_k` = 4 | WF-03, T-33 |
+| 분기 | `Type policy` → `Route by mode`(clarify) → `Clarify` | 어르신 + 범위 밖 질문 → 범위 안내 되묻기(티켓 없음). 다음을 모두 만족할 때만 되물음: 역할 `patient`, 유형 `other`, 위험 신호 · 약 · 약국 이용(영업시간 · 휴무 · 주차 · 화장실 · 위치 · 전화 · 처방전) 말이 없음, LLM 분류 결과를 읽음. 약국 이용 질문과 직원 · 약사 · 약국장의 `other`는 그대로 약국장 이관. 어르신의 약국 이용 질문은 분류가 `closing`(직원 전용)이어도 약 말이 없으면 `other`로 바꿔, 권한 없음 대신 약국장에게 이관 (`PHARM_USE` = 약국 이용 말 목록) | 2번째 되묻기부터 '약사님께 직접 여쭤보고 싶어요' 안내를 덧붙임. 횟수 초과(`attempt_limit`)로 이관하지 않음 | T-44 · 45 · 46 · 47 |
+| 병렬 | `Route by mode` → `Search knowledge` + `Get record` → `Merge evidence` | 근거 검색과 접수 조회는 서로의 결과가 필요 없어 한 노드에서 두 갈래로 나눔. 수업용 n8n(`executionOrder` v1)은 두 갈래를 차례로 실행 | — | WF-12 |
+| 루프 | `attempt` (요청 사이) | 보완 질문 | 최대 3회 (3회째 이관) | WF-02 · 02b, T-32 · 33 |
+| 외부 호출 | HTTP 재시도 없음 | 본체의 HTTP Request 7개 (`Check user` · `Check cache` · `Search knowledge` · `Get record` · `Handoff` · `Save cache` · `Log request`) | 각 호출은 설정된 timeout 뒤 오류 갈래로 진행. `Get record`의 3초 제한은 전체 6초 응답 목표를 위한 값 (앞단 Triage 분류 1~2초를 빼고 1초 여유. 11/6에 4초에서 3초로 줄임). 티켓 생성 재시도 규칙은 `team3-handoff` 계약에 따로 정함 (`00-DESIGN.md` 3.4절) | WF-04 · 11 |
+
+## 5. 외부 연동 노드
+
+| 노드 | 연동 대상 (연습용 → 실제 운영) | 인증 | 입력 | 출력 | 오류 처리 |
+| --- | --- | --- | --- | --- | --- |
+| `Support webhook` | 팀 Webhook → 웹 화면 · Slack Trigger | Header Auth (`team3WebhookKey`) → SSO · Slack 서명 | 계약 요청 | — | 키 없음 · 틀림 → 403 `Authorization data is wrong!` (n8n 2.42.6 실측), 워크플로우는 실행 안 됨 |
+| `Create ticket` | data-api `POST /tickets` → (약사 이관은 우리 화면, 장애만 Jira) | 연습용은 키 없음 → 운영은 API 키 (`X-Api-Key` Header Auth) | `{key, title, requester, category, priority}` | `{ticket_id, duplicate}` | 1차 실패 뒤 5xx·timeout·429만 2회 더 재시도 (2초 timeout · 500ms 간격, 최악 7초라 본체 제한 8초 안) → DLQ + 알림. 401·403은 재시도 없이 `auth_failed` |
+| `Send DLQ` | data-api `POST /dlq` | 위와 같음 | `{item:{id, type, priority, reason, severity}}` | `{ok}` | 실패 무시, `dlq: true` |
+| `Send alert` | data-api `POST /alerts` → Slack `#support-alerts` | 위와 같음 | `{workflow, node, severity, reason, message, ticket_id}` | `{stored}` | 실패 무시, `alert` 플래그만 (중복 티켓은 알림 없음) |
+| `Post to screen` | FastAPI `POST /tickets` (약사 화면, data-api 티켓이 있을 때만) | `team3ApiKey` (`X-Api-Key`) | data-api와 같은 본문 + `ticket_id` · `product` | 201 / 200 | 2초 timeout, 실패 무시 → `extras.screen: "failed"` |
+| `Call Slack` | `team3-alert` (`team3Alert000001`) → Slack | Slack Bot (`slackAio3Bot0001`) | `{mode, severity, reason, message}` | `{ok, mode, error}` | 실패 무시 → `extras.slack: "failed"` (`Post to Slack` 최대 3회 시도 · 1초 간격, 실제 모드에서만) |
+| `Call Jira` | `team3-ticket` (`team3Ticket00001`) → Jira | Jira Cloud (`jiraAio3Cloud001`) | `{mode, summary, reason}` | `{ok, mode, error}` | `Create Jira request` 4초 timeout · 재시도 없음, 실패 무시 → `extras.jira: "failed"` (실제 모드 · `tickets_down`일 때만) |
+| `Get record` | data-api `GET /tickets/<id>?requester=` → 약국 접수 시스템 | 연습용은 키 없음 → 운영은 `X-Api-Key` (사내 API) | 번호 · 사용자 | 접수 건 / 403 | timeout 3초, 재시도 없음 → 지연 안내 · `담당자 이관`(`tickets_slow`), 티켓은 만들지 않음 |
+| `Check user` | data-api `GET /employees/<user>` → 약국 계정 · SSO | 연습용은 키 없음 → 운영은 `X-Api-Key` | 이름 | `role` · `access_levels` | timeout 3초, 재시도 없음. 404이거나 응답이 없으면 400 `unknown_user` |
+
+> 약사 화면 알림은 n8n이 FastAPI로 따로 보내지 않습니다. 약사 화면은 FastAPI `GET /api/admin/alerts`로 data-api `GET /alerts`를 읽어 보여 줍니다. 3초 캐시를 두고, 읽기에 실패하면 마지막으로 성공한 값을 씁니다 (`00-DESIGN.md` 3.4절).
+
+본체(`team3-support.json`) HTTP timeout 실제 값: `Check user` 3초 · `Check cache` 2초 · `Search knowledge` 6초 · `Get record` 3초 · `Handoff` 8초 · `Save cache` 2초 · `Log request` 2초이고, 모두 재시도가 없습니다.
+
+## 6. 노드 간 페이로드 (연결선마다)
+
+예시는 **11/6 실제 실행본** `runs/trace-wf01-20261106-0959.json`에서 `실행 번호 · 노드 이름`으로 가리킵니다. 이 파일은 팀 VM 실제 모드에서 WF-01 한 건을 돌린 기록입니다(n8n 실행 1650 = `team3-support`, 1651 = `team3-search`). 노드마다 첫 출력 1개만 남겼고, 팀 키와 headers는 뺐으며, 사용자는 가상 인물입니다. 이 실행은 자동 답변으로 끝나 이관 쪽 연결선을 지나지 않았으므로, 이관 쪽은 계약 예시 [`../contracts/examples/`](../contracts/examples/)를 씁니다. 타입 표기: `string` · `number` · `boolean` · `string[]` · `object` · `null`, `A|B` = 둘 중 하나, 값이 정해진 칸은 `'값1'|'값2'`.
+
+| 연결선 | 필수 필드 | 선택 필드 | 타입 | 변환 로직 | 예시 |
+| --- | --- | --- | --- | --- | --- |
+| Webhook → `Validate input` | `request_id`, `user`, `question` | `channel`, `attempt`, `context` | `request_id` string(64자 안) · `user` string · `question` string(500자 안) · `channel` string · `attempt` number(없으면 1) · `context` string | `Start timer`: 앞뒤 공백 · 마크다운 기호 제거 → `clean_question`, `attempt` 숫자로 · `Validate input`: `Check user` 직원표에서 `role` · `access_levels` 붙임 | 1650 `Support webhook` (`request_id` · `user` · `question`) |
+| `Type policy` → `Search knowledge` | `query`, `access_levels` | `top_k`, `type` | `query` string · `access_levels` string[] · `top_k` number(4 고정) · `type` string | `clean_question` → `query`, `plan.type` → `type`, `access_levels`는 그대로 (이름 · 연락처 · `request_id`는 안 보냄). 권한 → 메모리 키(`pharm_kb_v1_all` / `_owner`)는 `team3-search`의 `KB settings`가 고름 | 1650 `Type policy` 출력 `plan`(closing · auto) → 1651 `Search webhook` body (`access_levels` · `top_k` 4 · `type`. `query`는 기록 도구의 가림 규칙에 걸려 빠짐, 값은 `clean_question`과 같음) |
+| `Search knowledge` → `Merge evidence`(입력 1) | `evidence[]` | `kb_version`, `search_ms` | `evidence[]` object[] = {`doc` string, `title` string, `section` string, `text` string, `score` number 0~1, `access_level` `'all'`\|`'owner'`} · `kb_version` string · `search_ms` number | 없음 (그대로 합침). 거르기는 다음 `Build context`: `SCORE_MIN`(0.37) 미만 · 권한 밖 제거 → 유형 문서 먼저 정렬 → `doc`+`section` 중복 제거 → 최대 4개에 `[n]` 번호 | 1650 `Search knowledge` (4건, 1등 closing-checklist 2절 0.591) |
+| `Get record` → `Record mode?` → `Merge evidence`(입력 2) | `statusCode`, `body` | — | `statusCode` number · `body` object (접수 건 또는 `{error, ticket_id}`) | `ticket_id`가 없으면 `NONE`으로 조회(404) · `requester` = 본인 이름. 응답이 200일 때만 `Build context`가 답 끝에 붙일 상태 한 줄(`record_line`)을 만듦 | 1650 `Get record` (`NONE` → 404 `ticket not found`) |
+| `Prepare handoff` → `Handoff` | `request_id`, `user`, `type`, `title`, `assignee`, `priority`, `reason` | `summary`, `product`, `mode` | 모두 string · `assignee` `'pharmacist'`\|`'owner'` · `priority` `'high'`\|`'normal'` · `mode` `'practice'` | `clean_question` 앞 80자 → `title`, 답(검사 통과본 또는 정해진 문장) → `summary`, `plan.assignee` · `plan.priority` · `reason`(없으면 `needs_person`) 그대로, 연락처 칸은 보내지 않음 | `contracts/examples/handoff.json` `request` |
+| `Handoff` → `After handoff` | `ticket`, `reason`, `dlq`, `alert` | `extras`, `handoff_ms` | `ticket` object\|null = {`ticket_id` string, `priority` string, `duplicate` boolean} · `reason` string · `dlq` boolean · `alert` boolean · `extras` object · `handoff_ms` number | `After handoff`: `ticket`에 `plan.assignee`를 붙임 · `tickets_down`이면 `ticket` null + 보관 안내 문장 | `handoff.json` `response_ok` · `response_duplicate` · `response_tickets_down` |
+| `Handoff` → data-api `/dlq` | `item.id`(= `request_id`), `item.type`, `item.priority`, `item.reason`, `item.severity` | — | 모두 string | 연락처, 손님과 약 이름을 함께 알 수 있는 조합은 넣지 않음 | `handoff.json` `response_tickets_down` |
+| `Handoff` → data-api `/alerts` | `workflow`, `node`, `severity`, `reason`, `message` | `ticket_id` | 모두 string | 메시지는 유형 · 담당자만 (연락처 없음) | `handoff.json` `response_ok` |
+| `Error Trigger` → `/alerts` · `/dlq` | `workflow`, `node`, `message`(앞 200자), `execution_id`, `severity:"critical"`, `reason:"unexpected"` | — | `execution_id` string\|number · 나머지 string | 메시지 연락처 가림 | — |
+| `Build result` → `Output filter` → … → `Send result` (응답) | `request_id`, `route`, `answer`, `sources`, `ticket`, `agents`, `security`, `reason` | `timings` | `route` string(5개 값) · `answer` string · `sources` object[] = {`doc`, `section` string, `score` number} · `ticket` object\|null · `agents` string[] · `security` object = {`blocked_by`, `reason` string, `masked` number} · `reason` string · `timings` object = {`total_ms` number} | `Build result`: `plan.notice`(AI 고지) · 접수 상태 줄 붙임 → `Output filter`: 연락처 가림(`masked` 수) | 1650 `Send result` (자동 답변 · sources 3 · ticket null) |
+
+## 7. 오류 처리
+
+| 상황 | 알아채는 노드 | 처리 | 사용자 응답 | 기록 | 확인한 시나리오 |
+| --- | --- | --- | --- | --- | --- |
+| 인증 실패 | `Create ticket` · HTTP 401/403 | 재시도 없이 DLQ + 알림 (`reason: auth_failed`) | 이관 안내 | DLQ · 알림 | 팀 |
+| 호출 한도 (429) | `Create ticket` HTTP 상태 → `Retry needed?` | 5xx·timeout·429만 첫 호출 뒤 최대 2회 재시도 (2초 timeout · 500ms 간격) 뒤 DLQ + 알림. 상태 코드가 문자 `'429'`로 와도 같음 | 이관 안내 | 재시도 수 · DLQ | 팀 (node 시뮬) |
+| 그 밖 4xx (400 · 404 · 422) | `Create ticket` HTTP 상태 → `Retry needed?` | **재시도 없이** DLQ + 알림 (`reason: tickets_down`) — 요청 자체가 틀리면 다시 보내도 결과가 같기 때문 | 이관 안내 | DLQ · 알림 | 팀 (node 시뮬 — 고장 스위치에 4xx · 429 모드가 없어 VM에서는 재현하지 않음, `runs/fault-idempotency-20261106.md`) |
+| 검색 결과 없음 | `Evidence?` | 이관 `no_evidence` | 담당자 연결 안내 | `reason` | WF-03 |
+| 외부 API 장애 (5xx · timeout) | `Create ticket` | 첫 호출 뒤 최대 2회 재시도 → DLQ + 알림 | 200, `ticket: null`, `dlq: true` | DLQ · 알림 | WF-04 |
+| 중복 요청 | `Cached?` · `Create ticket`의 `key` | 저장된 결과 / 기존 티켓, `duplicate: true` | 같은 답 | — | WF-09 |
+| LLM 멈춤 | `Triage` 오류 출력 → `Triage failed?` → `LLM down` → `Type policy` | `handoff_only` 이관 (자동 답변 · 되묻기 없음). 담당 · 긴급도는 코드가 정함: 위험 신호 말 → 약사 · high, 회수 → 약사 · high, 약 말 → 약사, 유형을 못 정하면 약국장 | 이관 안내 | `llm_down` | WF-10 |
+| 접수 조회 느림 | `Get record` timeout 3초 | 티켓 없이 바로 지연 안내 (`담당자 이관`) | 6초 안 | `tickets_slow` | WF-11 |
+| 화면 · Slack · Jira 실패 | `Post to screen` · `Call Slack` · `Call Jira` | 실패 무시, `extras`에 `failed`만 (알림 화면은 data-api 기록 유지) | 정상 응답 | `extras` · data-api | WF-04 · 12 |
+| 예상 못 한 오류 | Error Trigger (`team3Errors00001`) | `/alerts` critical + `/dlq` (+ real이면 Jira) | — | 알림 · DLQ | 팀 |
+
+Error Workflow: `team3-errors` (`team3Errors00001`). push · 게시 뒤 웹훅이 500을 내면 2~3초 안에 이 워크플로우가 실행되는지 `flow.py ops`로 확인합니다. 모든 워크플로우의 `settings.errorWorkflow`에 연결해 두었습니다.
+
+- 단계별 확인 (11/9): 파일 = `workflows/team3-errors.json` · 설정 = JSON 7개 모두 `settings.errorWorkflow` = `team3Errors00001` · 배포 = VM n8n 목록에 `team3Errors00001` 있음(`n8n list:workflow`) · 실제 자동 실행 = errors 실행 4137 (알림 0 → 1 · DLQ 0 → 1, `runs/recheck-20261109.md` Error Workflow 절).
+
+## 8. 수업 실습에서 가져온 것
+
+| 가져온 것 (실습 · 파일) | 어디에 | 바꾼 것 |
+| --- | --- | --- |
+| `reference/baseline-helpdesk.json` | `team3-support` 뼈대 | 팀 계약에 맞춰 `Support settings` · `Type policy` · 처리 방식 분기 · 검색/접수 조회 병렬 갈래 · 이관 · 캐시를 연결한 47노드 본체로 확장 |
+| 입력 검사 · 본인 건 · 출력 필터 실습 | `Validate input` · `Get record` · `Output filter` | 사용자 조회와 입력 오류를 LLM 앞에서 검사하고, 접수 조회에 `requester`를 넣어 본인 건만 확인하며, 응답의 연락처를 가림 |
+| `lab01-example2-index` · `-search` | `team3-index` · `team3-search` | 권한별 메모리 키 2개 |
+| `lab02-example2-intake` · `-error-handler` | `team3-handoff` · `team3-errors` | data-api 먼저 + 덧붙임 |

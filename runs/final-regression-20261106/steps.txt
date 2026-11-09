@@ -1,0 +1,20 @@
+pgdump (회귀 앞 PG)
+practice exit=0
+n8nset → n8nset.json
+owner → owner.json
+common1 rc=0
+common2 rc=0
+common3 rc=0
+raw common3 rc=1 (참고)
+round 1 done · team ['report: runs/team-20261106-062214.json'] · 3way ['report: runs/team-3way-20261106-062233.json'] · store 31 · pg 84
+round 1 exit=0
+round 2 done · team ['report: runs/team-20261106-062503.json'] · 3way ['report: runs/team-3way-20261106-062521.json'] · store 31 · pg 84
+round 2 exit=0
+round 3 done · team ['report: runs/team-20261106-062750.json'] · 3way ['report: runs/team-3way-20261106-062809.json'] · store 31 · pg 84
+round 3 exit=0
+fault+bench exit=0
+errtest (결과 errtest-*.json)
+errtest exit=0
+pgdump (회귀 뒤 PG)
+real exit=0
+restored → restored.json

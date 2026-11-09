@@ -1,0 +1,170 @@
+// 해든: 계약 예시를 초기값으로 사용하고, 질문 → 보완 → 접수 → 약사 처리 흐름을 연습할 목데이터를 관리합니다.
+import ex from "./contract-examples.json";
+import type { Who } from "./session";
+
+type RequestItem = { request_id: string; question: string; route: string; created_at: string; ticket: { ticket_id: string; status?: string; priority?: string } | null };
+type Ticket = { ticket_id: string; status: string; [key: string]: unknown };
+type AskInput = { user: string; question: string; context?: string; attempt?: number };
+const examples = ex as unknown as Record<string, { response: unknown }>;
+const copy = <T>(key: string): T => structuredClone(examples[key].response) as T;
+const initialRequests = copy<{ items: RequestItem[] }>("GET /api/my-requests?user=김하늘").items;
+const requests = new Map<string, RequestItem[]>([["김하늘", initialRequests]]);
+const tickets = copy<{ items: Ticket[] }>("GET /api/admin/tickets").items;
+type Handover = { id: number; by: string; note: string; open: { ticket_id: string; title: string; status: string }[]; at: string; done_at: string | null; done_by: string | null };
+const handovers: Handover[] = []; // 연습 모드의 '서버' 저장 (sessionStorage team3-mock에 같이 남음)
+const alerts = copy<{ items: unknown[] }>("GET /api/admin/alerts").items;
+let hydrated = false;
+let serial = 0;
+const seniorFollowupQuestion = "혈압약이랑 관절약 같이 먹어도 돼요?";
+const seniorDisclosure = "AI가 공공 의약품 정보를 정리한 안내예요. 복용 전 약사와 확인해 주세요.";
+
+// 바쁜 날 연습 데이터: sessionStorage team3-mock-busy=1이면 실제 VM처럼 열린 접수 · 알림을 10건 남짓으로 늘립니다 (화면 시험용).
+// 실제 알림에는 티켓 없는 n8n 날 문구('[other] owner에게 이관 ·')도 섞여 옵니다.
+function seedBusy() {
+  const at = (minute: number) => `2026-11-05T${String(9 + Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}:00+09:00`;
+  const rows: [string, string, string, string, string][] = [
+    ["T-2005", "마감 때 계산대 현금은 어떤 순서로 맞춰요?", "closing", "normal", "접수됨"],
+    ["T-2006", "뉴스에 나온 OTC-03 시럽 회수요, 아직 진열돼 있어요. 제 마감 차액 건(R-1001)도 어떻게 됐나요?", "recall", "high", "처리 중"],
+    ["T-2007", "뉴스에 나온 OTC-03 시럽 회수요, 아직 진열돼 있어요.", "recall", "high", "접수됨"],
+    ["T-2008", "마감 차액은 얼마까지 승인 없이 처리해요?", "closing", "normal", "처리 완료"],
+    ["T-2009", "약품 냉장고 온도가 9도로 올라가 있어요", "other", "high", "접수됨"],
+    ["T-2010", "지금 숨이 차고 가슴이 아파요. 119 버튼을 눌렀어요.", "senior", "high", "접수됨"],
+    ["T-2011", "뉴스에 나온 OTC-03 시럽이 아직 진열돼 있어요. 어떻게 해야 하나요?", "recall", "high", "접수됨"],
+    ["T-2012", "혈압약과 골다공증약을 같이 먹어도 되나?", "senior", "normal", "접수됨"],
+    ["T-2013", "포스 단말기 카드 결제가 자꾸 끊겨요", "other", "normal", "처리 완료"],
+    ["T-2014", "마감이 안 돼요", "closing", "normal", "접수됨"],
+  ];
+  rows.forEach(([ticket_id, title, category, priority, status], index) => tickets.unshift({ ticket_id, key: `busy-${index}`, title, requester: "김하늘", category, priority, status, product: category === "recall" ? "OTC-03" : "", created_at: at(index * 7) }));
+  const raw = (minute: number) => ({ workflow: "team3-handoff", severity: "high", reason: "handoff", message: "[other] owner에게 이관 ·", at: at(minute) });
+  alerts.unshift(
+    ...rows.filter(row => row[3] === "high").map(([ticket_id, title], index) => ({ workflow: "team3-handoff", severity: "high", reason: "urgent", message: `[긴급] ${title}`, ticket_id, at: at(60 - index) })),
+    raw(30), raw(20),
+    { workflow: "team3-errors", severity: "warning", reason: "llm_retry", message: "[warning] 답변 작성 다시 시도", at: at(10) },
+    { workflow: "team3-handoff", severity: "high", reason: "urgent", message: "[긴급] 마감 차액은 얼마까지 승인 없이 처리해요?", ticket_id: "T-2008", at: at(5) },
+  );
+}
+
+function hydrate() {
+  if (hydrated) return;
+  hydrated = true;
+  try {
+    const stored = sessionStorage.getItem("team3-mock");
+    if (!stored && sessionStorage.getItem("team3-mock-busy") === "1") { seedBusy(); persist(); }
+    if (!stored) return;
+    const state = JSON.parse(stored) as { requests: Record<string, RequestItem[]>; tickets: Ticket[]; alerts?: unknown[]; handovers?: Handover[] };
+    requests.clear();
+    for (const [name, items] of Object.entries(state.requests)) requests.set(name, items);
+    tickets.splice(0, tickets.length, ...state.tickets);
+    if (state.alerts) alerts.splice(0, alerts.length, ...state.alerts);
+    handovers.splice(0, handovers.length, ...(state.handovers ?? []));
+  } catch { /* 저장소를 사용할 수 없으면 메모리로 진행 */ }
+}
+
+function persist() {
+  try { sessionStorage.setItem("team3-mock", JSON.stringify({ requests: Object.fromEntries(requests), tickets, alerts, handovers })); }
+  catch { /* 사생활 모드에서는 메모리로만 진행 */ }
+}
+
+export function mock(method: string, path: string, body?: unknown, who?: Who | null): unknown {
+  hydrate();
+  const cleanPath = path.split("?")[0];
+  if (method === "GET" && cleanPath === "/api/users") return copy("GET /api/users");
+  if (method === "GET" && cleanPath === "/api/types") {
+    const types = copy<{ items: { type: string; examples: string[] }[] }>("GET /api/types");
+    // 해든: 화면 명세의 어르신 예시 버튼 3개를 확인할 수 있도록 QA 질문을 연습 데이터에 더합니다.
+    const senior = types.items.find(item => item.type === "senior");
+    if (senior && senior.examples.length < 3) senior.examples.push(seniorFollowupQuestion);
+    return types;
+  }
+  if (method === "POST" && cleanPath === "/api/ask") {
+    const input = body as AskInput;
+    const exampleQuestion = ex["POST /api/ask"].request.question;
+    const requestId = `mock-${Date.now()}-${++serial}`;
+    const isFollowup = input.question === seniorFollowupQuestion;
+    const needsMore = isFollowup && !input.context?.trim();
+    const shouldHandoff = input.question !== exampleQuestion && !needsMore;
+    // 위험 신호 흉내 (실제는 packs/senior/pack.json handoff_rules): 긴급 이관 → 어르신 화면에 119 카드
+    const risky = /숨이|숨쉬|가슴이|가슴 통증|의식|정신이|쓰러|경련|피를|피가|두드러기|입술|얼굴이 부|와파린/.test(input.question);
+    // 티켓 없는 이관 흉내: WF-04 질문(공유기)은 접수 시스템 장애 → DLQ 보관(tickets_down),
+    // sessionStorage team3-mock-noticket=1이면 다음 이관 한 번만 두뇌 응답 오류(brain_down) → 화면은 '아직 접수되지 않았어요' + 다시 묻기
+    const ticketsDown = /공유기/.test(input.question);
+    let brainDown = false;
+    if (shouldHandoff && !ticketsDown) { try { brainDown = sessionStorage.getItem("team3-mock-noticket") === "1"; if (brainDown) sessionStorage.removeItem("team3-mock-noticket"); } catch { /* 저장소 없음 */ } }
+    let response: { route: string; answer: string; sources: unknown[]; ticket: RequestItem["ticket"]; agents: string[]; reason?: string };
+    if (input.question === exampleQuestion) {
+      response = copy<typeof response>("POST /api/ask");
+    } else if (needsMore) {
+      response = { route: "보완 질문", answer: "약 이름과 지금 드시는 약을 알려 주세요. 함께 복용해도 되는지는 확인이 필요해요.", sources: [], ticket: null, agents: [] };
+    } else {
+      response = {
+        route: "담당자 이관",
+        answer: risky ? "걱정되는 증상이에요. 약사에게 긴급으로 넘겼어요."
+          : isFollowup
+          ? "알려 주신 내용을 약사가 확인할 수 있도록 접수했어요. 임의로 함께 복용하지 마세요."
+          : "연습 모드에는 이 질문의 답변 자료가 없어요. 담당자 확인 건으로 접수했어요.",
+        sources: [], ticket: null, agents: [],
+      };
+    }
+    if (shouldHandoff && (ticketsDown || brainDown)) {
+      response = { route: "담당자 이관", sources: [], ticket: null, agents: [],
+        answer: ticketsDown ? "담당자에게 넘기는 중 접수 시스템이 응답하지 않았어요. 요청은 보관해 두었고 확인되는 대로 연락드려요." : "지금 도우미가 응답하지 않아요. 잠시 뒤 다시 물어봐 주세요.",
+        reason: ticketsDown ? "tickets_down" : "brain_down" };
+    } else if (shouldHandoff) {
+      const ticketId = `T-MOCK-${Date.now()}-${serial}`;
+      const ticket: Ticket = {
+        ticket_id: ticketId, key: requestId, title: input.question, requester: input.user,
+        category: isFollowup || risky ? "senior" : "other", priority: risky ? "high" : "normal", status: "접수됨",
+        created_at: new Date().toISOString(),
+      };
+      tickets.unshift(ticket);
+      response.ticket = { ticket_id: ticketId, status: "접수됨", ...(risky ? { priority: "high" } : {}) };
+    }
+    if (who?.role === "patient") response.answer += `\n\n${seniorDisclosure}`;
+    const item: RequestItem = { request_id: requestId, question: input.question, route: response.route, ticket: response.ticket, created_at: new Date().toISOString() };
+    requests.set(input.user, [item, ...(requests.get(input.user) ?? [])]);
+    persist();
+    return { ...response, request_id: requestId };
+  }
+  if (method === "GET" && cleanPath === "/api/my-requests") {
+    const user = new URLSearchParams(path.split("?")[1] ?? "").get("user") ?? "";
+    if (who?.name !== user) throw new Error("내 문의만 확인할 수 있어요.");
+    return { items: requests.get(user) ?? [] };
+  }
+  if (cleanPath.startsWith("/api/admin/")) {
+    if (!who || !["pharmacist", "owner"].includes(who.role)) throw new Error("이 화면은 약사 · 약국장만 볼 수 있어요");
+    if (cleanPath.endsWith("/recall-notice") && who.role !== "pharmacist") throw new Error("손님 안내는 약사만 기록할 수 있어요");
+  }
+  if (method === "GET" && cleanPath === "/api/admin/tickets") return { items: structuredClone(tickets) };
+  if (method === "GET" && cleanPath === "/api/admin/alerts") return { items: structuredClone(alerts) };
+  if (method === "PATCH" && cleanPath.startsWith("/api/admin/tickets/")) {
+    const id = cleanPath.split("/").at(-1);
+    const ticket = tickets.find(t => t.ticket_id === id);
+    if (!ticket) throw new Error("없는 티켓이에요");
+    Object.assign(ticket, body);
+    for (const items of requests.values()) for (const item of items) if (item.ticket && item.ticket.ticket_id === id) item.ticket.status = ticket.status;
+    persist();
+    return structuredClone(ticket);
+  }
+  if (method === "POST" && cleanPath.endsWith("/recall-notice")) return copy("POST /api/admin/tickets/{id}/recall-notice");
+  // 인수인계: api/app/main.py · store.py와 같은 모양 (열린 티켓은 서버가 붙임, 둘 다 비면 400)
+  if (method === "GET" && cleanPath === "/api/admin/handover") return { item: structuredClone([...handovers].reverse().find(item => !item.done_at) ?? null) };
+  if (method === "POST" && cleanPath === "/api/admin/handover") {
+    const note = String((body as { note?: string } | undefined)?.note ?? "").trim().slice(0, 500);
+    const open = tickets.filter(t => t.status !== "처리 완료").map(t => ({ ticket_id: t.ticket_id, title: String(t.title ?? ""), status: t.status }));
+    if (!note && !open.length) throw new Error("남길 말이나 열린 접수 건이 있어야 해요");
+    const item: Handover = { id: handovers.length + 1, by: who!.name, note, open, at: new Date().toISOString(), done_at: null, done_by: null };
+    handovers.push(item);
+    persist();
+    return { item: structuredClone(item) };
+  }
+  const handoverDone = cleanPath.match(/^\/api\/admin\/handover\/(\d+)\/done$/);
+  if (method === "POST" && handoverDone) {
+    const item = handovers.find(row => row.id === Number(handoverDone[1]));
+    if (!item) throw new Error("없는 인수인계예요");
+    item.done_at = new Date().toISOString();
+    item.done_by = who!.name;
+    persist();
+    return { item: structuredClone(item) };
+  }
+  throw new Error("요청을 처리할 수 없어요.");
+}

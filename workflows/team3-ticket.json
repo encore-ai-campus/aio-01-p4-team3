@@ -1,0 +1,310 @@
+{
+  "id": "team3Ticket00001",
+  "name": "team3-ticket",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "team3Errors00001"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "t1",
+      "name": "Ticket called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f0",
+              "name": "mode",
+              "value": "={{ $json.mode === 'real' ? 'real' : 'practice' }}",
+              "type": "string"
+            },
+            {
+              "id": "f1",
+              "name": "serviceDeskId",
+              "value": "2",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "requestTypeId",
+              "value": "={{ $json.requestTypeId || '9' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "t2",
+      "name": "Ticket settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c0",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "real",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "t3",
+      "name": "Real?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "id": "t4",
+      "name": "Create Jira request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://aio3-servicedesk.atlassian.net/rest/servicedeskapi/request",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ serviceDeskId: $json.serviceDeskId, requestTypeId: $json.requestTypeId, requestFieldValues: { summary: (($json.title || ('[' + ($json.reason || 'tickets_down') + '] ' + ($json.workflow || 'team3-support'))) + '').replace(/01[016789][-. ]?\\d{3,4}[-. ]?\\d{4}/g, '010-****-****').replace(/[\\w.+-]+@[\\w-]+\\.[\\w.]+/g, '***@***').slice(0, 80), description: ['팀3 업무 도우미 자동 장애 티켓 (연락처 · 손님 정보 없음)', '까닭: ' + ($json.reason || '-'), '우선순위: ' + ($json.priority || $json.severity || '-'), '요청 번호: ' + ($json.request_id || $json.key || '-'), '워크플로우: ' + ($json.workflow || 'team3-support') + ($json.node ? ' › ' + $json.node : ''), '실행 번호: ' + ($json.execution_id || '-')].join('\\n') } }) }}",
+        "options": {
+          "timeout": 4000
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "jiraAio3Cloud001",
+          "name": "Jira Cloud (aio3-servicedesk)"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f0",
+              "name": "ok",
+              "value": "={{ true }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f1",
+              "name": "mode",
+              "value": "real",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "error",
+              "value": "={{ null }}",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "ticketKey",
+              "value": "={{ $json.issueKey }}",
+              "type": "string"
+            },
+            {
+              "id": "f4",
+              "name": "url",
+              "value": "={{ $json._links?.web || null }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "t5",
+      "name": "Jira ok",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f0",
+              "name": "ok",
+              "value": "={{ false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f1",
+              "name": "mode",
+              "value": "real",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "error",
+              "value": "={{ $json.error ? ($json.error.message || String($json.error)) : 'unknown error' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "t6",
+      "name": "Jira failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f0",
+              "name": "ok",
+              "value": "={{ true }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f1",
+              "name": "mode",
+              "value": "practice",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "error",
+              "value": "={{ null }}",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "skipped",
+              "value": "={{ true }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "t7",
+      "name": "Practice skip",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Ticket called": {
+      "main": [
+        [
+          {
+            "node": "Ticket settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket settings": {
+      "main": [
+        [
+          {
+            "node": "Real?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Real?": {
+      "main": [
+        [
+          {
+            "node": "Create Jira request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Practice skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Jira request": {
+      "main": [
+        [
+          {
+            "node": "Jira ok",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Jira failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

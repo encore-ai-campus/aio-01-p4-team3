@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+*.key
+node_modules/
+__pycache__/
+.DS_Store
+.venv/
+# n8n 내보내기 임시
+*.n8n.bak
+.pytest_cache/
+web/.next/
+web/.next-build/
+web/out/
+web/.npm-cache/
+web/.playwright-cli/
+web/*.tsbuildinfo
+tools/.cache/
+.deploy/

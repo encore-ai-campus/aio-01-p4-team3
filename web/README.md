@@ -1,0 +1,80 @@
+# 다정약국 화면
+
+질문하기(`/`), 내 문의(`/my`), 약사 화면(`/admin`)을 Next.js 정적 내보내기로 제공합니다. 화면은 FastAPI만 호출하며 키와 웹훅 주소를 포함하지 않습니다.
+
+- 첫 화면: 왼쪽 위 알약 로고(`public/logo.png`) + 다정약국, 작은 글씨 "매장 업무 태블릿", 가운데 큰 제목 "오늘도 건강한 하루 보내세요" (`components/login.tsx` · `components/app-shell.tsx`).
+- 들어가기: 역할 카드 → 사용자 선택 → 입장 코드. 코드는 들어갈 때 API로 바로 확인합니다.
+- 내 문의(`/my`): 로그인한 사람 본인 것만 보입니다. 화면은 고른 이름으로 `X-User`를 보내고, API가 남의 이름으로 부르면 403으로 막습니다 (약사 · 약국장은 예외).
+- 고객(환자) 화면: `components/senior-ask.tsx`. 글씨 크기 3단계이고, 예시는 `/api/types`의 senior 값을 씁니다.
+- 태블릿 틀: 마우스를 쓰는 폭 760px 이상 화면에서만 보이고, 내용은 틀 안에서 스크롤합니다. 실제 태블릿 · 휴대폰은 화면을 꽉 채웁니다.
+
+## 설치와 실행
+
+Node.js 20.9 이상이 필요합니다. 이 폴더(`web/`)에서 실행하세요.
+
+맥 · 리눅스:
+
+```bash
+npm install
+[ -f .env.local ] || cp .env.example .env.local
+npm run dev -- --port 3100
+```
+
+윈도우 (PowerShell):
+
+```powershell
+$env:npm_config_cache = (Join-Path (Get-Location) '.npm-cache')
+npm install
+if (-not (Test-Path .env.local)) { Copy-Item .env.example .env.local }
+npm run dev -- --port 3100
+```
+
+브라우저에서 `http://localhost:3100`을 엽니다. 빌드를 확인할 때는 개발 서버를 `Ctrl+C`로 종료한 뒤 `npm run build`와 `npm run check`를 실행하세요.
+
+윈도우 명령은 사용자 npm 캐시 폴더의 권한 오류를 피하려고 프로젝트 안 `.npm-cache/`를 씁니다. 설치된 버전은 `package-lock.json`에 고정돼 있습니다. Motion, lucide-react, sonner, Pretendard, Tailwind CSS 4와 shadcn UI 부품을 사용합니다. 본문 글꼴 Pretendard는 `next/font/local`로 패키지의 WOFF2 파일을 불러옵니다. 제목 글꼴 고운돋움은 `next/font/google`이 빌드할 때 받아 앱 안에 넣으므로, 빌드하는 PC는 인터넷이 돼야 합니다 (실행 중 외부 요청은 없습니다).
+
+기본값은 계약 예시를 사용하는 연습 모드입니다 (하단에 "연습 모드" 표시는 이 빌드에서만 보입니다). 실제 API를 연결할 때는 `.env.local`에 다음을 설정하고 개발 서버를 다시 시작하세요.
+
+```text
+NEXT_PUBLIC_API_MODE=real
+NEXT_PUBLIC_API_BASE=http://localhost:8000
+```
+
+API는 기본으로 `http://localhost:3000`(compose로 띄운 화면 주소)에서 오는 요청만 허용합니다. 개발 서버로 화면을 3100번에 켜면 API를 켤 때 `CORS_ORIGINS=http://localhost:3100`을 함께 지정하세요 (`infra/.env`를 쓰면 그 파일에). `NEXT_PUBLIC_*` 값은 빌드할 때 들어가므로, 바꾸면 다시 빌드합니다.
+
+`npm run build`의 결과는 `web/out/`에 생기고, `infra/compose.team3.yml`의 nginx가 이 폴더를 보여 줍니다.
+
+## 화면 작업 범위와 목데이터 (차해든)
+
+차해든이 질문하기, 내 문의, 약사 화면과 공통 디자인을 구현했습니다. 변경한 화면 코드의 맨 위에는 담당 이름과 작업 내용을 주석으로 남겼습니다. `components/ui/`는 shadcn 명령으로 생성한 공통 부품입니다.
+
+연습 모드는 계약 예시의 마감 질문에 근거가 있는 답을 보여 줍니다. 연습 모드의 어르신 예시 세 번째 질문 “혈압약이랑 관절약 같이 먹어도 돼요?”는 화면 점검용 목데이터이며 (실제 모드는 `/api/types` 값을 그대로 씁니다), 보완 질문 → 이어서 답하기 → 약사 접수를 확인할 수 있습니다. 그 밖의 질문은 답변 자료가 없는 접수 건으로 기록합니다. 연습 중의 질문과 티켓 상태는 현재 브라우저 탭의 `sessionStorage`에 저장됩니다. 실제 API 연결 검증은 API와 n8n이 준비된 뒤 진행해야 합니다.
+
+## 화면 점검
+
+개발 서버를 `npm run dev -- --port 3100`으로 켜고, 다른 터미널의 `web/`에서 다음을 실행합니다 (맥 · 리눅스는 첫 줄 없이). 브라우저를 새 세션으로 열어 세 화면과 사용자 역할, 375px 너비를 점검합니다.
+
+```powershell
+$env:npm_config_cache = (Join-Path (Get-Location) '.npm-cache')
+npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke open http://localhost:3100
+npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke run-code --filename tests/mock-screen-smoke.js
+npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke run-code --filename tests/voice-ask-smoke.js
+npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke run-code --filename tests/handover-smoke.js
+npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke close
+```
+
+## 퇴근 인수인계 (약사 화면 4단계)
+
+약사 화면 4단계 "인수인계"에서 남길 말을 적고 [인계 남기기]를 누르면 **약국 서버에 저장**됩니다 (`GET` · `POST /api/admin/handover`, `POST /api/admin/handover/{id}/done`). 아직 안 끝난 접수 건은 서버가 저절로 붙입니다. 다음에 들어온 약사 · 약국장은 **다른 태블릿 · 브라우저에서도** 1단계 "오늘 알림"에 "지난 근무 인계"가 보이고, 카드 머리 줄 오른쪽 [확인했어요]를 누르면 사라집니다. 열린 건은 3줄까지 보이고 나머지는 "외 N건"으로 줄입니다. 저장에 실패하면 "저장하지 못했어요. 다시 눌러 주세요."가 나오고, 인수인계를 못 불러와도 나머지 화면은 그대로 씁니다. 태블릿 `localStorage`에는 저장하지 않습니다. 연습 모드에서는 가짜 서버(`sessionStorage`)가 같은 모양으로 답합니다 (`tests/handover-smoke.js`: 남기기 → 새 브라우저로 로그인 → 보임 → 확인했어요 → 다시 들어와도 안 보임).
+
+## 말로 묻기 (고객 화면 마이크)
+
+고객(어르신) 화면 첫 화면에 큰 "말로 물어보기" 버튼이 있고, 답 화면의 "조금 더 알려 주세요" 칸에도 "말로 하기" 버튼이 있습니다.
+
+- 브라우저에 들어 있는 음성 인식(`SpeechRecognition` · `webkitSpeechRecognition`, 한국어)을 씁니다. 키 · 서버가 필요 없고 크롬 · 사파리에서 됩니다. 지원하지 않는 브라우저(파이어폭스 등)에서는 버튼이 보이지 않습니다.
+- 알아들은 문장을 크게 보여 주고 [이대로 물어보기] · [다시 말하기]를 고르게 합니다. 잘못 알아들은 채로 약 질문이 바로 가지 않게 하려는 것입니다.
+- 말소리는 브라우저의 음성 인식 서비스(크롬은 Google, 사파리는 Apple)로 가서 글자로만 돌아옵니다. 연습용 기능이며, 실제 운영이라면 고객 동의나 자체 음성 인식이 필요합니다.
+- 마이크는 https 주소(팀 VM)나 localhost에서만 켜집니다. 처음 누르면 브라우저가 마이크 허용을 묻습니다.
+- `tests/voice-ask-smoke.js`는 가짜 음성 인식을 넣어 누르기 → 듣기 → 문장 표시 → 물어보기 → 보완 질문 → 말로 하기 → 이어서 답하기를 확인합니다 (연습 모드).
+
+375px 화면 캡처는 `../docs/images/screen-{ask,my,admin}-375.png`에 있습니다. 캡처의 이름과 연락처는 가렸습니다.
