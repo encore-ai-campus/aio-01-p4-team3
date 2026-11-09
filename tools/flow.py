@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = []
 # ///
-"""Course helper: check, push and test the n8n workflows that a CLI coding agent wrote.
+"""Course helper: check, push and test n8n workflows.
 
 3팀판 (강사 77일차 tools/flow.py 복사본, 팀 레포 뿌리에서 실행: uv run tools/flow.py ...). 강사 판과 다른 곳은 5개뿐:
   1) TEAM_CREDENTIALS — 우리 팀 Credential(웹훅 키 · FastAPI 키 · Jira · Slack)도 허용해 check · push가 막히지 않음
@@ -105,7 +105,7 @@ def team_env(name: str) -> str:  # 3팀판: 레포 infra/.env 의 값 (없으면
 # 3팀판: 팀 웹훅 Header Auth 키 = FLOW_WEBHOOK_KEY, 없으면 infra/.env 의 TEAM3_KEY
 WEBHOOK_KEY = os.getenv("FLOW_WEBHOOK_KEY", "").strip() or team_env("TEAM3_KEY")
 
-# Versions written in the course AGENTS.md. Other versions still work if n8n knows them (warning only).
+# Recommended node versions for the course n8n. Other versions still work if n8n knows them (warning only).
 RECOMMENDED = {
     "n8n-nodes-base.webhook": 2,
     "n8n-nodes-base.respondToWebhook": 1.1,
@@ -305,7 +305,7 @@ def check_workflow(workflow: object) -> tuple[list[str], list[str]]:
         elif known and version not in known[node_type]:
             errors.append(f"{label}: {node_type} has no typeVersion {version} (available: {known[node_type]})")
         elif node_type in RECOMMENDED and version != RECOMMENDED[node_type]:
-            warnings.append(f"{label}: typeVersion {version} (course AGENTS.md uses {RECOMMENDED[node_type]})")
+            warnings.append(f"{label}: typeVersion {version} (recommended: {RECOMMENDED[node_type]})")
         if not isinstance(node.get("parameters"), dict):
             errors.append(f"{label} needs 'parameters' (use {{}} when empty)")
         position = node.get("position")
@@ -835,7 +835,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
 
 
 def bucket(user: str) -> int:
-    """Same rule as the course AGENTS.md: sum of the character codes of the user name, modulo 100."""
+    """Course rule: sum of the character codes of the user name, modulo 100."""
     return sum(ord(ch) for ch in user) % 100
 
 
@@ -1201,9 +1201,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             _, payload, _ = http("GET", f"{N8N_URL}/webhook/{hook}", timeout=5)
             line("not registered for" in json.dumps(payload, ensure_ascii=False), f"agent webhook /{hook}",
                  "uv run tools/flow.py push <agent workflow file>", {"GET": f"/webhook/{hook}", "response": payload})
-    agents = [name for name in ("codex", "claude", "agy") if shutil.which(name)]
-    line(bool(agents), "CLI coding agent: " + (", ".join(agents) if agents else "none"),
-         "install one of codex / claude / agy (see Lecture/77/00-DAY77-PREP.md)", {name: shutil.which(name) for name in agents})
     print("ready" if not failures else f"{failures} item(s) to fix")
     return 0 if not failures else 1
 
@@ -1215,7 +1212,7 @@ def main() -> int:
                         help="details: request and response JSON, workflow nodes and links, docker commands")
     parser = argparse.ArgumentParser(description="Check, push and test course n8n workflows.")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("doctor", parents=[common], help="check n8n, data API, credentials and CLI agents").set_defaults(run=cmd_doctor)
+    commands.add_parser("doctor", parents=[common], help="check n8n, data API and credentials").set_defaults(run=cmd_doctor)
     item = commands.add_parser("check", parents=[common], help="find mistakes in a workflow file")
     item.add_argument("file")
     item.set_defaults(run=cmd_check)

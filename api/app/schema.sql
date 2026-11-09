@@ -1,4 +1,4 @@
--- [병훈님이 정함] PostgreSQL 표 초안 — 칸 · 색인 · 기본키는 바꿔도 됨. 연락처 · 질문 원문을 어디까지 남길지 같이 정할 것.
+-- PostgreSQL 표 정의 (DATABASE_URL이 있을 때 PgStore가 씀). 연락처는 남기지 않고, 질문 원문은 화면 '내 문의'에만 씀.
 CREATE SEQUENCE IF NOT EXISTS team3_ticket_seq START 3001;
 CREATE TABLE IF NOT EXISTS requests (
   request_id  text PRIMARY KEY,

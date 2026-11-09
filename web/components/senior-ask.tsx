@@ -1,6 +1,6 @@
 "use client";
 
-// 해든: 3004의 고객(어르신) 화면입니다. 글씨 크기 단계가 rem으로 화면 전체를 키우고, 예시는 /api/types 값을 씁니다.
+// 해든: 시안의 고객(어르신) 화면입니다. 글씨 크기 단계가 rem으로 화면 전체를 키우고, 예시는 /api/types 값을 씁니다.
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowRight, Home, Mic, PhoneCall, Square, Volume2 } from "lucide-react";

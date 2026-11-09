@@ -56,11 +56,11 @@ API는 기본으로 `http://localhost:3000`(compose로 띄운 화면 주소)에�
 
 ```powershell
 $env:npm_config_cache = (Join-Path (Get-Location) '.npm-cache')
-npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke open http://localhost:3100
-npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke run-code --filename tests/mock-screen-smoke.js
-npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke run-code --filename tests/voice-ask-smoke.js
-npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke run-code --filename tests/handover-smoke.js
-npx --yes --package @playwright/cli playwright-cli -s=haedeun_smoke close
+npx --yes --package @playwright/cli playwright-cli -s=web_smoke open http://localhost:3100
+npx --yes --package @playwright/cli playwright-cli -s=web_smoke run-code --filename tests/mock-screen-smoke.js
+npx --yes --package @playwright/cli playwright-cli -s=web_smoke run-code --filename tests/voice-ask-smoke.js
+npx --yes --package @playwright/cli playwright-cli -s=web_smoke run-code --filename tests/handover-smoke.js
+npx --yes --package @playwright/cli playwright-cli -s=web_smoke close
 ```
 
 ## 퇴근 인수인계 (약사 화면 4단계)

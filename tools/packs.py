@@ -131,7 +131,7 @@ def check(root: Path, active: list[str], quiet: bool = False) -> bool:
         errors.append(f"사용자 {len(users)}명 · 접수 건 {len(records)}건 (5명 · 4건 이상, 주인 2명 이상)")
     lock = root / "cases/common.sha256"
     if not lock.exists() or lock.read_text().strip() != digest(root):
-        errors.append("cases/common.json 해시가 lock과 다름 (11/5 14:00 점검 뒤로는 바꾸면 안 됨, 바꾼 게 맞으면 리드가 lock)")
+        errors.append("cases/common.json 해시가 lock과 다름 (공통 시나리오는 바꾸지 않음, 바꾼 게 맞으면 lock을 다시 만듦)")
     if not quiet:
         print("\n".join([f"  · 참고: {w}" for w in warns] + [f"✘ {e}" for e in errors]) or "", end="\n" if warns or errors else "")
         print(f"{'✔' if not errors else '✘'} check: 팩 {active} · 문서 {len(docs)} · 유형 {len(types)} · 팀 시나리오 {len(team)} · 공통 {len(common)}")

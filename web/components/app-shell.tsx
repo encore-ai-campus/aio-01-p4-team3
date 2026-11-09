@@ -1,6 +1,6 @@
 "use client";
 
-// 해든: 3004 다정약국의 머리 메뉴(알약 메뉴 · 사용자 · 로그아웃)와 이동 효과를 구성했습니다.
+// 해든: 시안의 다정약국 머리 메뉴(알약 메뉴 · 사용자 · 로그아웃)와 이동 효과를 구성했습니다.
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";

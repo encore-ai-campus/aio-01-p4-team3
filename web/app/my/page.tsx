@@ -1,6 +1,6 @@
 "use client";
 
-// 해든: 3004의 내 문의(문의 목록 → 한눈에 보기)를 /api/my-requests로 연결했습니다.
+// 해든: 시안의 내 문의(문의 목록 → 한눈에 보기)를 /api/my-requests로 연결했습니다.
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { Clock3 } from "lucide-react";

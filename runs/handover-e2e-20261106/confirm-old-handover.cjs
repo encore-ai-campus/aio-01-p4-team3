@@ -1,4 +1,4 @@
-// 어제(11/5 17:19) 확인 안 한 인계 #7만 약사 화면에서 '확인했어요' (태웅 14:11 OK)
+// 어제(11/5 17:19) 확인 안 한 인계 #7만 약사 화면에서 '확인했어요'
 const { chromium } = require("playwright-core");
 const BASE = process.env.BASE, CODE = process.env.CODE, OUT = process.argv[2];
 (async () => {

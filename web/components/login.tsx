@@ -1,6 +1,6 @@
 "use client";
 
-// 해든: 3004의 역할 카드 로그인을 명세의 사용자 선택 + 입장 코드로 연결했습니다. 코드는 들어갈 때 API로 바로 확인합니다.
+// 해든: 시안의 역할 카드 로그인을 명세의 사용자 선택 + 입장 코드로 연결했습니다. 코드는 들어갈 때 API로 바로 확인합니다.
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "motion/react";

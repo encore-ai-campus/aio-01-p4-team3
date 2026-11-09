@@ -1,6 +1,6 @@
 "use client";
 
-// 해든: 3004의 약사 화면(오늘 알림 → 접수 목록 → 접수 상세)을 API로 연결했습니다. 역할 확인은 화면과 API가 함께 합니다.
+// 해든: 시안의 약사 화면(오늘 알림 → 접수 목록 → 접수 상세)을 API로 연결했습니다. 역할 확인은 화면과 API가 함께 합니다.
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
@@ -122,7 +122,7 @@ function TicketDetail({ ticket, who, onSaved }: { ticket: Ticket; who: Who; onSa
     <div className="detail-head"><span className="detail-id">{ticket.ticket_id}</span>{ticket.priority === "high" && <span className="urgent-pill">긴급</span>}<StatusPill status={ticket.status} /></div>
     <h3 className="detail-title">{ticket.title}</h3>
     <dl className="kv"><dt>요청</dt><dd>{ticket.requester} · {timeLabel(ticket.created_at)}</dd><dt>분류</dt><dd>{categoryNames[ticket.category] ?? ticket.category}</dd>{ticket.product && <><dt>제품</dt><dd>{ticket.product}</dd></>}</dl>
-    {/* 제품을 모르는 회수 티켓은 안내 대상 손님을 고를 수 없으니 버튼 대신 한 줄 (다영 QA 11/5) */}
+    {/* 제품을 모르는 회수 티켓은 안내 대상 손님을 고를 수 없으니 버튼 대신 한 줄 */}
     {ticket.category === "recall" && who.role === "pharmacist" && !ticket.product?.trim() && <p className="callout"><b>손님 안내</b> 제품이 확인되지 않아 손님 안내를 보낼 수 없어요</p>}
     {ticket.category === "recall" && who.role === "pharmacist" && !!ticket.product?.trim() && <div className="notice-box"><div><b>회수 손님 안내</b><p>이 제품을 산 손님 중 동의한 분만 기록해요. 실제로 발송되지 않아요.</p></div><Button className="primary-action danger-action" disabled={sending} onClick={notify}><Send size={16} /> {sending ? "기록하는 중" : "손님 안내 보내기"}</Button></div>}
     {ticket.category === "recall" && who.role === "owner" && <p className="callout"><b>권한 안내</b> 손님 안내는 약사 계정에서만 할 수 있어요.</p>}
@@ -186,7 +186,7 @@ export default function AdminPage() {
   const ticket = tickets.find(item => item.ticket_id === selected);
   const openTickets = tickets.filter(item => item.status !== "처리 완료");
   const urgentAlerts = alerts.filter(alert => alert.severity === "high" || alert.severity === "critical");
-  // 맨 위 배너: 열린 회수(recall) 티켓이 있으면 그것 먼저 (해든 QA 11/5: 최근 긴급 건이 배너를 차지해 회수가 안 보였음, 아직 손 안 댄 '접수됨' 우선)
+  // 맨 위 배너: 열린 회수(recall) 티켓이 있으면 그것 먼저 (최근 긴급 건이 배너를 차지해 회수가 안 보였음, 아직 손 안 댄 '접수됨' 우선)
   // → 없으면 아직 안 끝난 티켓이 달린 긴급 알림 → 그 밖의 긴급 알림
   const recall = openTickets.find(item => item.category === "recall" && item.status === "접수됨") ?? openTickets.find(item => item.category === "recall");
   const recallLead: Alert | undefined = recall && (urgentAlerts.find(alert => alert.ticket_id === recall.ticket_id) ?? { reason: "recall", severity: "high", message: recall.title, ticket_id: recall.ticket_id, at: recall.created_at });

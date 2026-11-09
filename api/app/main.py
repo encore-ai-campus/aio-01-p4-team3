@@ -77,7 +77,7 @@ def fallback(request_id: str, reason: str = "brain_down") -> dict:
 
 
 async def call_brain(body: dict) -> dict:
-    """[병훈님이 정함] timeout · 재시도. 지금은 15초 한 번."""
+    """timeout · 재시도: 15초 한 번."""
     url = os.getenv("N8N_WEBHOOK_URL", "")
     if not url:
         return fallback(body["request_id"], "brain_not_set")

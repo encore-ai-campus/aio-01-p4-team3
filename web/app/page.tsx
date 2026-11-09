@@ -1,6 +1,6 @@
 "use client";
 
-// 해든: 3004의 질문 쓰기 → 답 보기 화면을 FastAPI 응답(/api/ask · /api/types · /api/my-requests)으로 연결했습니다.
+// 해든: 시안의 질문 쓰기 → 답 보기 화면을 FastAPI 응답(/api/ask · /api/types · /api/my-requests)으로 연결했습니다.
 import Link from "next/link";
 import { motion } from "motion/react";
 import { ArrowRight, BookOpenText, Check, ChevronRight, ClipboardList, History, MessageCircle, Pill, ReceiptText, Send, TriangleAlert } from "lucide-react";
